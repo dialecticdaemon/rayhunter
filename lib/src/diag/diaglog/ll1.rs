@@ -14,23 +14,29 @@ pub struct ServingCellTiming {
         pad_bits_after = "5",
         assert = "*starting_system_fn <= 1023"
     )]
+    #[deku(endian = "little")]
     pub starting_system_fn: u16,
     #[deku(
         bits = 19,
         pad_bits_after = "13",
         assert = "*starting_dl_frame_timing_offs <= 307200"
     )]
+    #[deku(endian = "little")]
     pub starting_dl_frame_timing_offs: u32, // in Ts units
-    #[deku(bits = 19, assert = "*starting_ul_frame_timing_offs <= 307200")]
+    #[deku(
+        endian = "little",
+        bits = 19,
+        assert = "*starting_ul_frame_timing_offs <= 307200"
+    )]
     pub starting_ul_frame_timing_offs: u32, // in Ts units
-    #[deku(bits = 11, pad_bits_after = "2")]
+    #[deku(endian = "little", bits = 11, pad_bits_after = "2")]
     pub starting_ul_timing_advance: u16, // in 16 Ts units
     #[deku(count = "num_records")]
     pub timing_adjustment: Vec<TimingAdjustment>,
 }
 
 #[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite)]
-#[deku(bit_order = "lsb", ctx = "_: deku::ctx::Order")]
+#[deku(endian = "little", bit_order = "lsb", ctx = "_: deku::ctx::Order")]
 pub struct TimingAdjustment {
     #[deku(
         bits = 11,

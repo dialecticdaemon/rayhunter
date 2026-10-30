@@ -3,7 +3,11 @@
 use deku::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite)]
-#[deku(ctx = "ext_header_version: u8", id = "ext_header_version")]
+#[deku(
+    endian = "little",
+    ctx = "ext_header_version: u8",
+    id = "ext_header_version"
+)]
 pub enum LteRrcOtaPacket {
     #[deku(id_pat = "0..=4")]
     V0 {

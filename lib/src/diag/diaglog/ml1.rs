@@ -25,22 +25,29 @@ pub mod serving_cell {
     #[deku(bit_order = "lsb")]
     pub struct MeasurementAndEvaluation {
         pub header: MeasurementAndEvaluationHeader,
-        #[deku(bits = 12, pad_bits_after = "20")]
+        #[deku(endian = "little", bits = 12, pad_bits_after = "20")]
         meas_rsrp: u16,
-        #[deku(bits = 12, pad_bits_after = "20")]
+        #[deku(endian = "little", bits = 12, pad_bits_after = "20")]
         avg_rsrp: u16,
-        #[deku(bits = 10, pad_bits_after = "22")]
+        #[deku(endian = "little", bits = 10, pad_bits_after = "22")]
         meas_rsrq: u16,
-        #[deku(pad_bits_before = "10", bits = 11, pad_bits_after = "11")]
+        #[deku(
+            endian = "little",
+            pad_bits_before = "10",
+            bits = 11,
+            pad_bits_after = "11"
+        )]
         meas_rssi: u16,
+        #[deku(endian = "little")]
         rxlev: u32,
+        #[deku(endian = "little")]
         s_search: u32,
-        #[deku(cond = "header.get_rrc_rel() == 0x01")]
+        #[deku(endian = "little", cond = "header.get_rrc_rel() == 0x01")]
         r9_data: Option<u32>,
     }
 
     #[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite)]
-    #[deku(ctx = "_: Order", id_type = "u8", bit_order = "lsb")]
+    #[deku(endian = "little", ctx = "_: Order", id_type = "u8", bit_order = "lsb")]
     pub enum MeasurementAndEvaluationHeader {
         #[deku(id = "4")]
         V4 {
@@ -106,7 +113,7 @@ pub mod neighbor_cells {
     use super::*;
 
     #[derive(Clone, Debug, DekuRead, DekuWrite, PartialEq)]
-    #[deku(id_type = "u8", bit_order = "lsb")]
+    #[deku(endian = "little", id_type = "u8", bit_order = "lsb")]
     pub enum MeasurementsHeader {
         #[deku(id = "4")]
         V4 {
@@ -156,7 +163,7 @@ pub mod neighbor_cells {
     }
 
     #[derive(Clone, Debug, DekuRead, DekuWrite, PartialEq)]
-    #[deku(bit_order = "lsb")]
+    #[deku(endian = "little", bit_order = "lsb")]
     pub struct MeasurementsCell {
         #[deku(bits = 9)]
         pub pci: u16,

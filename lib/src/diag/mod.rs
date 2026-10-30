@@ -22,13 +22,13 @@ pub struct RequestContainer {
     pub data_type: DataType,
     #[deku(skip)]
     pub use_mdm: bool,
-    #[deku(skip, cond = "!*use_mdm")]
+    #[deku(endian = "little", skip, cond = "!*use_mdm")]
     pub mdm_field: i32,
     pub hdlc_encapsulated_request: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, DekuWrite)]
-#[deku(id_type = "u32")]
+#[deku(id_endian = "little", id_type = "u32")]
 pub enum Request {
     #[deku(id = "115")]
     LogConfig(LogConfigRequest),
@@ -82,6 +82,7 @@ pub const CRC_CCITT: Crc<u16> = Crc::<u16>::new(&CRC_CCITT_ALG);
 #[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite)]
 pub struct MessagesContainer {
     pub data_type: DataType,
+    #[deku(endian = "little")]
     pub num_messages: u32,
     #[deku(count = "num_messages")]
     pub messages: Vec<HdlcEncapsulatedMessage>,
@@ -100,6 +101,7 @@ impl MessagesContainer {
 }
 
 #[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "little")]
 pub struct HdlcEncapsulatedMessage {
     pub len: u32,
     #[deku(count = "len")]
@@ -112,8 +114,11 @@ pub enum Message {
     #[deku(id = "16")]
     Log {
         pending_msgs: u8,
+        #[deku(endian = "little")]
         outer_length: u16,
+        #[deku(endian = "little")]
         inner_length: u16,
+        #[deku(endian = "little")]
         log_type: u16,
         timestamp: Timestamp,
         // pass the log type and log length (inner_length - (sizeof(log_type) + sizeof(timestamp)))
@@ -131,7 +136,9 @@ pub enum Message {
         opcode2: u8,
         opcode3: u8,
         opcode4: u8,
+        #[deku(endian = "little")]
         subopcode: u32,
+        #[deku(endian = "little")]
         status: u32,
         #[deku(ctx = "u32::from_le_bytes([*opcode1, *opcode2, *opcode3, *opcode4]), *subopcode")]
         payload: ResponsePayload,
@@ -166,7 +173,7 @@ pub enum ResponsePayload {
 }
 
 #[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite)]
-#[deku(ctx = "subopcode: u32", id = "subopcode")]
+#[deku(endian = "little", ctx = "subopcode: u32", id = "subopcode")]
 pub enum LogConfigResponse {
     #[deku(id = "1")]
     RetrieveIdRanges { log_mask_sizes: [u32; 16] },

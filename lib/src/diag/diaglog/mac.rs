@@ -17,6 +17,7 @@ pub struct Packet {
 pub struct Subpacket {
     pub id: u8,
     pub version: u8,
+    #[deku(endian = "little")]
     pub size: u16,
     // size includes the header length, so subtract that
     #[deku(ctx = "*id, *version, *size - 4")]
@@ -82,6 +83,7 @@ pub mod rach {
     }
 
     #[derive(DekuRead, DekuWrite, Debug, Clone, PartialEq)]
+    #[deku(endian = "little")]
     pub struct AdditionalInfo {
         pub ul_earfcn: u32,
         pub p_max: u8,
@@ -91,7 +93,7 @@ pub mod rach {
     }
 
     #[derive(DekuRead, DekuWrite, Debug, Clone, PartialEq)]
-    #[deku(ctx = "version: u8", id = "version")]
+    #[deku(endian = "little", ctx = "version: u8", id = "version")]
     pub enum Msg1 {
         #[deku(id = "0x02")]
         V2 {
@@ -126,6 +128,7 @@ pub mod rach {
     }
 
     #[derive(DekuRead, DekuWrite, Debug, Clone, PartialEq)]
+    #[deku(endian = "little")]
     pub struct Msg2 {
         pub backoff: u16,
         pub result: u8,
@@ -138,6 +141,7 @@ pub mod rach {
     pub struct Msg3 {
         #[deku(ctx = "version")]
         pub grant: Msg3Grant,
+        #[deku(endian = "little")]
         pub unk_grant: u16,
         pub harq_id: u8,
         pub mac_pdu: [u8; 10],

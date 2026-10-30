@@ -15,6 +15,7 @@ pub enum LogBody {
     WcdmaSignallingMessage {
         channel_type: u8,
         radio_bearer: u8,
+        #[deku(endian = "little")]
         length: u16,
         #[deku(count = "length")]
         msg: Vec<u8>,
@@ -48,7 +49,7 @@ pub enum LogBody {
     // * 0xb0ed: plain EMM NAS message (outgoing)
     #[deku(id_pat = "0xb0e2 | 0xb0e3 | 0xb0ec | 0xb0ed")]
     Nas4GMessage {
-        #[deku(skip, default = "log_type")]
+        #[deku(endian = "little", skip, default = "log_type")]
         log_type: u16,
         #[deku(ctx = "*log_type")]
         direction: Nas4GMessageDirection,
@@ -69,6 +70,7 @@ pub enum LogBody {
     #[deku(id = "0x713a")]
     UmtsNasOtaMessage {
         is_uplink: u8,
+        #[deku(endian = "little")]
         length: u32,
         #[deku(count = "length")]
         msg: Vec<u8>,
@@ -425,5 +427,21 @@ pub(crate) mod test {
 
         // Verify we consumed the expected number of bytes
         assert_eq!(rest.len(), 17);
+    }
+
+    #[test]
+    fn test_request_serialization_is_little_endian() {
+        // DIAG is little-endian, also on big-endian hosts
+        let req = Request::LogConfig(LogConfigRequest::RetrieveIdRanges);
+        assert_eq!(req.to_bytes().unwrap(), vec![0x73, 0, 0, 0, 0x01, 0, 0, 0]);
+
+        let req = build_log_mask_request(1, 3474, &[]);
+        let bytes = req.to_bytes().unwrap();
+        assert_eq!(
+            &bytes[..16],
+            &[
+                0x73, 0, 0, 0, 0x03, 0, 0, 0, 0x01, 0, 0, 0, 0x92, 0x0d, 0, 0
+            ]
+        );
     }
 }
