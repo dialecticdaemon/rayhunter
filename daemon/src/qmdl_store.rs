@@ -236,7 +236,9 @@ impl RecordingStore {
                 continue;
             };
 
-            let Ok(start_timestamp) = stem.parse::<i64>() else {
+            // "<seconds>" or "<seconds>-<n>" (see RecordingStore::new_entry)
+            let seconds = stem.split_once('-').map_or(stem, |(seconds, _)| seconds);
+            let Ok(start_timestamp) = seconds.parse::<i64>() else {
                 warn!("QMDL file has invalid name {os_filename:?}, skipping");
                 continue;
             };
@@ -312,7 +314,14 @@ impl RecordingStore {
         if self.current_entry.is_some() {
             self.close_current_entry().await?;
         }
-        let new_entry = ManifestEntry::new(gps_mode);
+        let mut new_entry = ManifestEntry::new(gps_mode);
+        // The name is the start second; a clock that starts at 1970 after a reboot can reuse one.
+        let base_name = new_entry.name.clone();
+        let mut suffix = 1;
+        while self.name_in_use(&new_entry.name).await {
+            new_entry.name = format!("{base_name}-{suffix}");
+            suffix += 1;
+        }
         let qmdl_filepath = new_entry.get_filepath(FileKind::Qmdl, &self.path);
         let qmdl_file = File::create(&qmdl_filepath)
             .await
@@ -329,6 +338,21 @@ impl RecordingStore {
         self.current_entry = Some(self.manifest.entries.len() - 1);
         self.write_manifest().await?;
         Ok((qmdl_file, analysis_file))
+    }
+
+    async fn name_in_use(&self, name: &str) -> bool {
+        if self.manifest.entries.iter().any(|entry| entry.name == name) {
+            return true;
+        }
+        for kind in FileKind::ALL {
+            for compressed in [false, true] {
+                let path = kind.get_filepath(name, &self.path, compressed);
+                if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub async fn open_file(
@@ -634,6 +658,39 @@ mod tests {
         let new_entry_index = store.current_entry.unwrap();
         assert_ne!(entry_index, new_entry_index);
         assert_eq!(store.manifest.entries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_new_entry_does_not_reuse_existing_name() {
+        let dir = make_temp_dir();
+        let mut store = RecordingStore::create(dir.path()).await.unwrap();
+        let (mut qmdl_file, _) = store.new_entry(GpsMode::Disabled).await.unwrap();
+        qmdl_file.write_all(b"first recording").await.unwrap();
+        let first_name = store.manifest.entries[0].name.clone();
+        // same second, or a device whose clock restarted at 1970 after a reboot
+        let _ = store.new_entry(GpsMode::Disabled).await.unwrap();
+        let _ = store.new_entry(GpsMode::Disabled).await.unwrap();
+        let names: Vec<&str> = store
+            .manifest
+            .entries
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        let unique: std::collections::HashSet<&str> = names.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "duplicate entry names: {names:?}"
+        );
+        let first = store.open_file(0, FileKind::Qmdl).await.unwrap().unwrap();
+        let mut contents = String::new();
+        tokio::io::AsyncReadExt::read_to_string(
+            &mut tokio::io::BufReader::new(first),
+            &mut contents,
+        )
+        .await
+        .unwrap();
+        assert_eq!(contents, "first recording", "{first_name} was overwritten");
     }
 
     #[tokio::test]

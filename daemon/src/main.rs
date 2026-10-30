@@ -155,11 +155,30 @@ fn run_shutdown_thread(
     info!("create shutdown thread");
 
     task_tracker.spawn(async move {
+        // init scripts stop the daemon with SIGTERM; without the cleanup the .qmdl.gz is truncated
+        #[cfg(unix)]
+        let terminate = async {
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut sigterm) => {
+                    sigterm.recv().await;
+                }
+                Err(err) => {
+                    error!("Unable to listen for SIGTERM: {err}");
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
         select! {
             res = tokio::signal::ctrl_c() => {
                 if let Err(err) = res {
                     error!("Unable to listen for shutdown signal: {err}");
                 }
+            }
+            _ = terminate => {
+                info!("received SIGTERM, shutting down");
             }
             _ = shutdown_token.cancelled() => {}
         }
