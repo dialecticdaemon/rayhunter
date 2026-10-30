@@ -68,6 +68,10 @@ pub struct Config {
     pub debug_mode: bool,
     /// Internal device name
     pub device: Device,
+    /// Read diag from a USB serial port: a tty path or `usb:VID:PID:INTERFACE`
+    pub diag_serial: Option<String>,
+    /// Only log the RRC and NAS messages the analyzers use
+    pub diag_signalling_only: bool,
     /// UI level
     pub ui_level: UiLevel,
     /// Colorblind mode
@@ -150,6 +154,8 @@ impl Default for Config {
             port: 8080,
             debug_mode: false,
             device: Device::Orbic,
+            diag_serial: None,
+            diag_signalling_only: false,
             ui_level: UiLevel::Subtle,
             colorblind_mode: false,
             key_input_mode: KeyInputMode::Disabled,

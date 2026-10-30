@@ -1,5 +1,4 @@
 use std::ops::DerefMut;
-use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -464,6 +463,8 @@ impl DiagTask {
 pub fn run_diag_read_thread(
     task_tracker: &TaskTracker,
     device: Device,
+    diag_serial: Option<String>,
+    diag_signalling_only: bool,
     mut qmdl_file_rx: Receiver<DiagDeviceCtrlMessage>,
     qmdl_file_tx: Sender<DiagDeviceCtrlMessage>,
     ui_update_sender: Sender<display::DisplayState>,
@@ -478,12 +479,19 @@ pub fn run_diag_read_thread(
 ) {
     task_tracker.spawn(async move {
         info!("Using configuration for device: {0:?}", device);
-        let mut dev = DiagDevice::new(&device)
-            .await?;
+        let mut dev = match &diag_serial {
+            Some(spec) => DiagDevice::new_serial(spec).await?,
+            None => DiagDevice::new(&device).await?,
+        };
+        if diag_signalling_only {
+            info!("Restricting diag logging to signalling messages");
+            dev.signalling_only();
+        }
         dev.config_logs()
             .await?;
 
-        let mut diag_stream = pin!(dev.as_stream().into_stream());
+        // boxed so that it can be dropped before the logs are disabled below
+        let mut diag_stream = Box::pin(dev.as_stream().into_stream());
         let mut diag_task = DiagTask::new(
             ui_update_sender,
             analysis_sender,
@@ -499,7 +507,7 @@ pub fn run_diag_read_thread(
             .send(DiagDeviceCtrlMessage::StartRecording { response_tx: None })
             .await
             .unwrap();
-        loop {
+        let result = loop {
             tokio::select! {
                 msg = qmdl_file_rx.recv() => {
                     match msg {
@@ -520,7 +528,7 @@ pub fn run_diag_read_thread(
                             info!("Diag reader thread exiting...");
                             let mut qmdl_store = qmdl_store_lock.write().await;
                             diag_task.stop_current_recording(qmdl_store.deref_mut()).await;
-                            return Ok(())
+                            break Ok(())
                         },
                         Some(DiagDeviceCtrlMessage::DeleteEntry { name, response_tx }) => {
                             let mut qmdl_store = qmdl_store_lock.write().await;
@@ -550,12 +558,17 @@ pub fn run_diag_read_thread(
                         },
                         Err(err) => {
                             error!("error reading diag device: {err}");
-                            return Err(err);
+                            break Err(err);
                         }
                     }
                 }
             }
+        };
+        drop(diag_stream);
+        if let Err(e) = dev.disable_logs().await {
+            warn!("failed to disable diag logging: {e}");
         }
+        result
     });
 }
 
