@@ -24,4 +24,5 @@
   - [Wingtech CT2MHS01](./wingtech-ct2mhs01.md)
   - [PinePhone and PinePhone Pro](./pinephone.md)
   - [Moxee Hotspot](./moxee.md)
+  - [GL.iNet Mudi V2 (experimental)](./glinet-mudi.md)
 - [REST API Documentation](./api-docs.md)

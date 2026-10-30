@@ -28,6 +28,13 @@ Rayhunter is confirmed to work on these devices.
 | [FY UZ801](./uz801.md) | Asia, Europe |
 | [Moxee hotspot](./moxee.md) | Americas |
 
+## 3. Experimental devices
+These run Rayhunter from a branch, without an installer, and have only been tested in a lab.
+
+| Device | Recommended region |
+| ------ | ------ |
+| [GL.iNet Mudi V2](./glinet-mudi.md) | Global (tested in Germany) |
+
 ## Adding new devices
 Rayhunter was built and tested primarily on the Orbic RC400L mobile hotspot, but the community has been working hard at adding support for other devices. Theoretically, if a device runs a Qualcomm modem and exposes a `/dev/diag` interface, Rayhunter may work on it.
 

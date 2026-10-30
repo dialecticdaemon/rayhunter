@@ -29,6 +29,14 @@ Through web UI you can set:
   - *Software Updates*, which will alert when a new Rayhunter release is available. Only triggers when *Automatically check for software updates* is enabled.
 - With **Analyzer Heuristic Settings** you can switch on or off built-in [Rayhunter heuristics](heuristics.md). Some heuristics are experimental or can trigger a lot of false positive warnings in some networks (our tests have shown that some heuristics have different behavior in US or European networks). In that case you can decide whether you would like to have the heuristics that trigger a lot of false positives on or off. Please note that we are constantly improving and adding new heuristics, so a new release may reduce false positives in existing heuristics as well.
 
+## Diag source and storage (branch only)
+
+Three options can only be set in `config.toml`, not in the web UI. They are mainly for devices without `/dev/diag`, such as the [GL.iNet Mudi](./glinet-mudi.md#configuration):
+
+- `diag_serial`: read diag from a USB serial port (`usb:VID:PID:INTERFACE` or a device path) instead of `/dev/diag`.
+- `diag_signalling_only`: log only the RRC and NAS messages the heuristics use. This needs less storage and CPU, and no user IP traffic is logged.
+- `store_informational_events`: also write analysis rows that contain only Informational events.
+
 ## GPS
 
 The **GPS Settings** allows you to attach GPS-based location history to every recording. Data is stored as a separate JSON file next to QMDL, and also inlined into the PCAP file as packet comment.
