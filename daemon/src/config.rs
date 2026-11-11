@@ -72,6 +72,8 @@ pub struct Config {
     pub diag_serial: Option<String>,
     /// Only log the RRC and NAS messages the analyzers use
     pub diag_signalling_only: bool,
+    /// Also store analysis rows that only contain Informational events
+    pub store_informational_events: bool,
     /// UI level
     pub ui_level: UiLevel,
     /// Colorblind mode
@@ -156,6 +158,7 @@ impl Default for Config {
             device: Device::Orbic,
             diag_serial: None,
             diag_signalling_only: false,
+            store_informational_events: false,
             ui_level: UiLevel::Subtle,
             colorblind_mode: false,
             key_input_mode: KeyInputMode::Disabled,

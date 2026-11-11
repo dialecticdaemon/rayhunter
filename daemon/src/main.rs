@@ -242,6 +242,10 @@ async fn run_with_config(
     let _shutdown_guard = shutdown_token.clone().drop_guard();
 
     let notification_service = NotificationService::new(config.ntfy_url.clone());
+    analysis::STORE_INFORMATIONAL_EVENTS.store(
+        config.store_informational_events,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let update_status_lock = Arc::new(RwLock::new(UpdateStatus::default()));
 
     if !config.debug_mode {

@@ -9,7 +9,7 @@ use axum::{
 use log::{error, info};
 use rayhunter::Device;
 use rayhunter::DeviceMetadata;
-use rayhunter::analysis::analyzer::{AnalyzerConfig, EventType, Harness};
+use rayhunter::analysis::analyzer::{AnalysisRow, AnalyzerConfig, EventType, Harness};
 use rayhunter::diag::{DiagParsingError, Message, MessagesContainer};
 use rayhunter::qmdl::QmdlMessageReader;
 use serde::Serialize;
@@ -21,6 +21,16 @@ use tokio_util::task::TaskTracker;
 
 use crate::qmdl_store::{FileKind, RecordingStore};
 use crate::server::ServerState;
+
+/// Set at startup from `Config::store_informational_events`.
+pub static STORE_INFORMATIONAL_EVENTS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn should_write(row: &AnalysisRow) -> bool {
+    !row.is_empty()
+        || (STORE_INFORMATIONAL_EVENTS.load(std::sync::atomic::Ordering::Relaxed)
+            && row.events.iter().flatten().next().is_some())
+}
 
 pub struct AnalysisWriter {
     writer: BufWriter<File>,
@@ -59,7 +69,7 @@ impl AnalysisWriter {
         let mut max_type = EventType::Informational;
 
         for row in self.harness.analyze_qmdl_messages(container) {
-            if !row.is_empty() {
+            if should_write(&row) {
                 self.write(&row).await?;
             }
             max_type = cmp::max(max_type, row.get_max_event_type());
@@ -72,7 +82,7 @@ impl AnalysisWriter {
         maybe_qmdl_msg: Result<Message, DiagParsingError>,
     ) -> Result<EventType, std::io::Error> {
         let row = self.harness.analyze_qmdl_message(maybe_qmdl_msg);
-        if !row.is_empty() {
+        if should_write(&row) {
             self.write(&row).await?;
         }
         Ok(row.get_max_event_type())
