@@ -178,8 +178,12 @@ pub enum LogConfigResponse {
     #[deku(id = "1")]
     RetrieveIdRanges { log_mask_sizes: [u32; 16] },
 
+    /// The modem echoes the mask; kept raw so that a short answer (error status) still parses.
     #[deku(id = "3")]
-    SetMask,
+    SetMask {
+        #[deku(read_all)]
+        echo: Vec<u8>,
+    },
 }
 
 pub fn build_log_mask_request(

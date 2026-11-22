@@ -265,7 +265,7 @@ impl DiagDevice {
                 Ok(Message::Response {
                     payload, status, ..
                 }) => {
-                    if let ResponsePayload::LogConfig(LogConfigResponse::SetMask) = payload {
+                    if let ResponsePayload::LogConfig(LogConfigResponse::SetMask { .. }) = payload {
                         if status != 0 {
                             return Err(DiagDeviceError::RequestFailed(status, req));
                         }

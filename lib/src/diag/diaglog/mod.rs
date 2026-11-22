@@ -418,15 +418,34 @@ pub(crate) mod test {
                     opcode4: 0x00,
                     subopcode: 3,
                     status: 2968256522, // [0x0a, 0x00, 0xec, 0xb0] in LE
-                    payload: ResponsePayload::LogConfig(LogConfigResponse::SetMask),
+                    payload: ResponsePayload::LogConfig(LogConfigResponse::SetMask { .. }),
                 }
             ),
             "Unexpected message: {:?}",
             msg
         );
 
-        // Verify we consumed the expected number of bytes
-        assert_eq!(rest.len(), 17);
+        // The echoed mask is part of the response, nothing is left over
+        assert_eq!(rest.len(), 0);
+    }
+
+    #[test]
+    fn test_set_mask_response_with_and_without_echo() {
+        // the modem echoes log type 1, a mask of 9 bits and the 2 mask bytes
+        let full = b"\x73\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x09\x00\x00\x00\xff\x01";
+        // a shorter answer, e.g. with an error status, must still parse
+        let short = b"\x73\x00\x00\x00\x03\x00\x00\x00\x01\x00\x00\x00";
+        for (bytes, echo_len) in [(&full[..], 10), (&short[..], 0)] {
+            let ((rest, _), msg) = Message::from_bytes((bytes, 0)).unwrap();
+            assert!(rest.is_empty());
+            match msg {
+                Message::Response {
+                    payload: ResponsePayload::LogConfig(LogConfigResponse::SetMask { echo }),
+                    ..
+                } => assert_eq!(echo.len(), echo_len),
+                other => panic!("Unexpected message: {other:?}"),
+            }
+        }
     }
 
     #[test]
