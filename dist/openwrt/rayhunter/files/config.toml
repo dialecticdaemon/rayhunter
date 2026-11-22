@@ -1,0 +1,8 @@
+qmdl_store_path = "/tmp/rayhunter/qmdl"
+port = 8089
+device = "mudi"
+diag_serial = "usb:2c7c:030b:00"
+diag_signalling_only = true
+auto_check_updates = false
+min_space_to_start_recording_mb = 20
+min_space_to_continue_recording_mb = 15
