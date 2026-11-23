@@ -131,6 +131,75 @@ Old recordings stay where they were. If the SD card is removed while Rayhunter
 runs, recording stops and does not resume when the card is put back. After
 putting it back, reboot the router or run `/etc/init.d/rayhunter restart`.
 
+## Redacting identities and location (experimental)
+
+This branch adds two options. Both are off by default.
+
+* `redact_identities` replaces the IMSI, IMEI and IMEISV, TMSI, the router's
+  IP address and SMS content in LTE RRC and NAS messages before a recording is
+  written to the SD card or flash. Messages where that isn't possible are left
+  out of the recording.
+* `redact_location` does that too, and also clears the cell ID, tracking area
+  and frequency, the MME group and code and the network's time zone. Messages
+  that mostly describe the location, such as other system information,
+  measurement reports and handovers, are left out.
+
+Detection always runs on the messages as they come from the modem, in RAM, so
+warnings appear as usual.
+
+To turn one on, add it as the first line of `/etc/rayhunter/config.toml`:
+
+```toml
+redact_location = true
+```
+
+It has to come before any line in square brackets, such as `[analyzers]`.
+Everything below such a line belongs to that section, so the setting would be
+ignored there. Then run `/etc/init.d/rayhunter restart`.
+
+Which one to use:
+
+* With `redact_identities` only, a recording still contains the cell IDs and
+  times, which show where and when the router was. Over a day that is a
+  movement profile.
+* With `redact_location`, a saved recording can no longer prove every warning.
+  Warnings based on system information, such as a priority downgrade in SIB6
+  or SIB7, are shown live but are missing when the recording is analysed again
+  later.
+
+Recordings made before an option was turned on are not changed. Delete or
+overwrite them. `rayhunter-check --redact -P` writes a redacted pcap of an
+existing recording.
+
+Tested on GL firmware 4.3.30 in a lab cell: attach, tracking area update with a
+new TMSI, detach and a NAS null cipher with `redact_identities`, and detach and
+a NAS null cipher with `redact_location`. The null cipher was detected each
+time. The recording on the SD card contained no IMSI, IMEI or TMSI, and with
+`redact_location` no cell ID, tracking area or frequency. 155 lab and field
+recordings were also redacted offline, with none of their identities left.
+
+Not tested on the device yet: a tracking area update with `redact_location`,
+SMS, the router's IP address, runs over several hours and a real network.
+
+## Together with blue-merle (experimental)
+
+[blue-merle](https://github.com/srlabs/blue-merle) changes the router's IMEI
+and then powers the router off. Rayhunter can run next to it:
+
+* On GL firmware 4.3.30 with blue-merle 3.1.5, the package installs and
+  Rayhunter detects attacks as usual.
+* On GL firmware 4.3.26 with blue-merle 3.0.5, Rayhunter kept running through
+  an IMEI change. The recording ends when the router powers off and can still
+  be read. After the next start Rayhunter starts again on its own, about
+  2.5 minutes after power-on, so the first attach with the new identity is not
+  recorded.
+
+Recordings from before the change stay on the SD card. Without redaction they
+contain the old IMSI and IMEI, so they can link the old and the new identity.
+With `redact_identities` they contain no identities, but the cells and times
+can still link them; `redact_location` removes those too. An IMEI change with
+redaction turned on has not been tested yet.
+
 ## Display
 
 A Low warning shows once on the OLED. Medium and High repeat every few seconds,

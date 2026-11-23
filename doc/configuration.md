@@ -31,11 +31,13 @@ Through web UI you can set:
 
 ## Diag source and storage (branch only)
 
-Three options can only be set in `config.toml`, not in the web UI. They are mainly for devices without `/dev/diag`, such as the [GL.iNet Mudi](./glinet-mudi.md#configuration):
+Five options can only be set in `config.toml`, not in the web UI. They are mainly for devices without `/dev/diag`, such as the [GL.iNet Mudi](./glinet-mudi.md#configuration):
 
 - `diag_serial`: read diag from a USB serial port (`usb:VID:PID:INTERFACE` or a device path) instead of `/dev/diag`.
 - `diag_signalling_only`: log only the RRC and NAS messages the heuristics use. This needs less storage and CPU, and no user IP traffic is logged.
 - `store_informational_events`: also write analysis rows that contain only Informational events.
+- `redact_identities`: replace the IMSI, IMEI, TMSI and the device's IP address in recordings before they are written. Messages where that isn't possible are not written. The heuristics still see the messages as received. Experimental, see [Redacting identities and location](./glinet-mudi.md#redacting-identities-and-location-experimental).
+- `redact_location`: also remove the cell, tracking area, frequency and other location information before recordings are written. Implies `redact_identities`. Experimental.
 
 ## GPS
 
