@@ -23,12 +23,22 @@
 //! cell raised a warning, and they also reveal where the device was. Limit what is shared to a
 //! time window around a warning.
 //!
+//! [`Redactor::with_location`] also removes where the device was, for recordings kept on storage
+//! that can't be wiped reliably (an SD card): cell identity and tracking area in SIB1, the cell
+//! and frequency in the log packet header, tracking areas, location areas and the MME group and
+//! code in NAS, the MME code in S-TMSI and the network's time zone. Messages that describe the
+//! neighbourhood or the device's radio (other system information, measurement reports,
+//! reconfigurations, handovers, re-establishment, UE capabilities, UE information) are left out.
+//! The PLMN (country and operator), frequencies of redirects and timestamps stay.
+//!
 //! The modified messages must still be valid. NAS is rewritten in place with the same length.
 //! RRC is decoded to find the identity values, which are then overwritten bit for bit in the
 //! original PDU; a message where that isn't unambiguous is dropped rather than shared unredacted.
 
 use std::collections::HashMap;
 
+use crate::diag::diaglog::LogBody;
+use crate::diag::diaglog::rrc::LteRrcOtaPacket;
 use crate::diag::{
     CRC_CCITT, HdlcEncapsulatedMessage, MESSAGE_TERMINATOR, Message, MessagesContainer,
 };
@@ -45,11 +55,20 @@ pub struct Redactor {
     tmsis: HashMap<u32, u32>,
     imsis: HashMap<Vec<u8>, u64>,
     imeis: HashMap<Vec<u8>, u64>,
+    location: bool,
 }
 
 impl Redactor {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Also removes location information, see the module documentation.
+    pub fn with_location() -> Self {
+        Self {
+            location: true,
+            ..Self::default()
+        }
     }
 
     /// Returns the message with identities replaced, or `None` if it may contain identities
@@ -107,10 +126,15 @@ impl Redactor {
         match Message::from_hdlc(frame).ok()? {
             Message::Response { .. } => Some(frame.to_vec()),
             msg @ Message::Log { .. } => {
+                let header = if self.location {
+                    OtaHeader::of(&msg)
+                } else {
+                    None
+                };
                 let (_, gsmtap) = parser::parse(msg).ok()??;
                 let original = gsmtap.payload.clone();
                 let clean = self.redact(gsmtap)?;
-                if clean.payload == original {
+                if clean.payload == original && header.is_none() {
                     return Some(frame.to_vec());
                 }
                 if clean.payload.len() != original.len() {
@@ -120,6 +144,9 @@ impl Redactor {
                 let mut raw = hdlc_decapsulate(frame, &CRC_CCITT).ok()?;
                 let at = find_once(&raw, &original)?;
                 raw[at..at + original.len()].copy_from_slice(&clean.payload);
+                if let Some(header) = header {
+                    header.clear(&mut raw, at)?;
+                }
                 Some(hdlc_encapsulate(&raw, &CRC_CCITT))
             }
         }
@@ -168,11 +195,19 @@ impl Redactor {
                     self.optional_ies(pdu, end)
                 }),
             // Attach Accept: result, T3412, TAI list, ESM container
-            0x42 => skip_lv(pdu, 4).and_then(|i| {
-                let end = lve_end(pdu, i)?;
-                self.nas(&mut pdu[i + 2..end]);
-                self.optional_ies(pdu, end)
-            }),
+            0x42 => {
+                let tai_end = skip_lv(pdu, 4);
+                if self.location
+                    && let Some(end) = tai_end
+                {
+                    pdu[5..end].fill(0);
+                }
+                tai_end.and_then(|i| {
+                    let end = lve_end(pdu, i)?;
+                    self.nas(&mut pdu[i + 2..end]);
+                    self.optional_ies(pdu, end)
+                })
+            }
             // Detach Request: from the UE with an identity, from the network only the type and
             // an optional cause (IEI 0x53)
             0x45 if pdu.get(3) == Some(&0x53) && pdu.len() == 5 => Some(5),
@@ -197,6 +232,8 @@ impl Redactor {
             0x5e => self.optional_ies(pdu, 2),
             // SMS, generic transport, CS service notification (calling number): drop contents
             0x62..=0x64 | 0x68 | 0x69 => Some(zero_from(pdu, 2)),
+            // EMM Information: network name and the local time zone
+            0x61 if self.location => Some(zero_from(pdu, 2)),
             // everything else carries no identity
             _ => Some(pdu.len()),
         };
@@ -263,6 +300,9 @@ impl Redactor {
             6 if value.len() == 11 => {
                 let tmsi = u32::from_be_bytes(value[7..11].try_into().ok()?);
                 value[7..11].copy_from_slice(&self.tmsi(tmsi).to_be_bytes());
+                if self.location {
+                    value[4..7].fill(0);
+                }
             }
             // no identity
             0 => {}
@@ -284,10 +324,20 @@ impl Redactor {
                 continue;
             }
             if let Some(len) = fixed_tv_len(iei) {
+                // TAI, LAI
+                if self.location && (iei == 0x52 || iei == 0x13) {
+                    pdu.get_mut(at + 1..at + len)?.fill(0);
+                }
                 at += len;
                 continue;
             }
             match iei {
+                // TAI list
+                0x54 if self.location => {
+                    let end = skip_lv(pdu, at + 1)?;
+                    pdu[at + 2..end].fill(0);
+                    at = end;
+                }
                 0x78 | 0x79 => {
                     let end = lve_end(pdu, at + 1)?;
                     self.nas(&mut pdu[at + 3..end]);
@@ -308,22 +358,24 @@ impl Redactor {
     fn rrc(&mut self, subtype: LteRrcSubtype, payload: &[u8]) -> Option<Vec<u8>> {
         use LteRrcSubtype as L;
         let replacements = match subtype {
+            // the MIB and connection setup carry neither identities nor a location
+            L::BcchBch | L::DlCcch => return Some(payload.to_vec()),
+            L::BcchDlSch if self.location => self.bcch_dl_sch(&decode(payload).ok()?)?,
             // cell broadcast and messages without UE identities
-            L::BcchBch
-            | L::BcchDlSch
-            | L::DlCcch
-            | L::MCCH
-            | L::BcchBchMbms
-            | L::BcchDlSchBr
-            | L::BcchDlSchMbms => return Some(payload.to_vec()),
+            L::BcchDlSch | L::MCCH | L::BcchBchMbms | L::BcchDlSchBr | L::BcchDlSchMbms
+                if !self.location =>
+            {
+                return Some(payload.to_vec());
+            }
             L::PCCH => self.pcch(&decode(payload).ok()?),
-            L::UlCcch => self.ul_ccch(&decode(payload).ok()?),
-            L::UlDcch => self.ul_dcch(&decode(payload).ok()?),
-            L::DlDcch => self.dl_dcch(&decode(payload).ok()?),
+            L::UlCcch => self.ul_ccch(&decode(payload).ok()?)?,
+            L::UlDcch => self.ul_dcch(&decode(payload).ok()?)?,
+            L::DlDcch => self.dl_dcch(&decode(payload).ok()?)?,
             _ => return None,
         };
         let redacted = replace_bits(payload, &replacements)?;
         let still_decodes = match subtype {
+            L::BcchDlSch => decode::<lte_rrc::BCCH_DL_SCH_Message>(&redacted).is_ok(),
             L::PCCH => decode::<lte_rrc::PCCH_Message>(&redacted).is_ok(),
             L::UlCcch => decode::<lte_rrc::UL_CCCH_Message>(&redacted).is_ok(),
             L::UlDcch => decode::<lte_rrc::UL_DCCH_Message>(&redacted).is_ok(),
@@ -345,9 +397,14 @@ impl Redactor {
         let new_tmsi: Bits = (0..m_tmsi.len())
             .map(|i| m_tmsi.len() <= 32 && placeholder & (1 << (m_tmsi.len() - 1 - i)) != 0)
             .collect();
+        let new_mmec = if self.location {
+            vec![false; mmec.len()]
+        } else {
+            mmec.clone()
+        };
         Replacement {
-            old: [mmec.clone(), m_tmsi].concat(),
-            new: [mmec, new_tmsi].concat(),
+            old: [mmec, m_tmsi].concat(),
+            new: [new_mmec, new_tmsi].concat(),
         }
     }
 
@@ -388,6 +445,28 @@ impl Redactor {
         }
     }
 
+    /// SIB1 with the tracking area and cell identity zeroed (adjacent in the encoding); other
+    /// system information lists neighbour cells and frequencies and is left out.
+    fn bcch_dl_sch(&mut self, msg: &lte_rrc::BCCH_DL_SCH_Message) -> Option<Vec<Replacement>> {
+        use lte_rrc::{BCCH_DL_SCH_MessageType, BCCH_DL_SCH_MessageType_c1};
+        let BCCH_DL_SCH_MessageType::C1(BCCH_DL_SCH_MessageType_c1::SystemInformationBlockType1(
+            sib1,
+        )) = &msg.message
+        else {
+            return None;
+        };
+        let info = &sib1.cell_access_related_info;
+        let old: Bits = info
+            .tracking_area_code
+            .0
+            .iter()
+            .chain(info.cell_identity.0.iter())
+            .map(|b| *b)
+            .collect();
+        let new = vec![false; old.len()];
+        Some(vec![Replacement { old, new }])
+    }
+
     fn pcch(&mut self, msg: &lte_rrc::PCCH_Message) -> Vec<Replacement> {
         use lte_rrc::{PCCH_MessageType, PCCH_MessageType_c1, PagingUE_Identity};
         let PCCH_MessageType::C1(PCCH_MessageType_c1::Paging(paging)) = &msg.message else {
@@ -404,23 +483,28 @@ impl Redactor {
         out
     }
 
-    fn ul_ccch(&mut self, msg: &lte_rrc::UL_CCCH_Message) -> Vec<Replacement> {
+    fn ul_ccch(&mut self, msg: &lte_rrc::UL_CCCH_Message) -> Option<Vec<Replacement>> {
         use lte_rrc::{
             InitialUE_Identity, RRCConnectionRequestCriticalExtensions, UL_CCCH_MessageType,
             UL_CCCH_MessageType_c1,
         };
-        if let UL_CCCH_MessageType::C1(UL_CCCH_MessageType_c1::RrcConnectionRequest(req)) =
-            &msg.message
-            && let RRCConnectionRequestCriticalExtensions::RrcConnectionRequest_r8(ies) =
-                &req.critical_extensions
-            && let InitialUE_Identity::S_TMSI(s_tmsi) = &ies.ue_identity
-        {
-            return vec![self.s_tmsi(s_tmsi)];
+        match &msg.message {
+            UL_CCCH_MessageType::C1(UL_CCCH_MessageType_c1::RrcConnectionRequest(req)) => {
+                if let RRCConnectionRequestCriticalExtensions::RrcConnectionRequest_r8(ies) =
+                    &req.critical_extensions
+                    && let InitialUE_Identity::S_TMSI(s_tmsi) = &ies.ue_identity
+                {
+                    return Some(vec![self.s_tmsi(s_tmsi)]);
+                }
+                Some(vec![])
+            }
+            // re-establishment names the previous cell
+            _ if self.location => None,
+            _ => Some(vec![]),
         }
-        vec![]
     }
 
-    fn ul_dcch(&mut self, msg: &lte_rrc::UL_DCCH_Message) -> Vec<Replacement> {
+    fn ul_dcch(&mut self, msg: &lte_rrc::UL_DCCH_Message) -> Option<Vec<Replacement>> {
         use lte_rrc::{
             RRCConnectionSetupCompleteCriticalExtensions as SetupExt,
             RRCConnectionSetupCompleteCriticalExtensions_c1 as SetupC1, UL_DCCH_MessageType,
@@ -429,14 +513,29 @@ impl Redactor {
             ULInformationTransferCriticalExtensions_c1 as UlC1,
         };
         let UL_DCCH_MessageType::C1(c1) = &msg.message else {
-            return vec![];
+            return (!self.location).then(Vec::new);
         };
         match c1 {
             C1::RrcConnectionSetupComplete(complete) => {
                 if let SetupExt::C1(SetupC1::RrcConnectionSetupComplete_r8(ies)) =
                     &complete.critical_extensions
                 {
-                    return vec![self.rrc_nas(&ies.dedicated_info_nas)];
+                    let mut out = vec![self.rrc_nas(&ies.dedicated_info_nas)];
+                    // MME group and code (adjacent in the encoding)
+                    if self.location
+                        && let Some(mme) = &ies.registered_mme
+                    {
+                        let old: Bits = mme
+                            .mmegi
+                            .0
+                            .iter()
+                            .chain(mme.mmec.0.iter())
+                            .map(|b| *b)
+                            .collect();
+                        let new = vec![false; old.len()];
+                        out.push(Replacement { old, new });
+                    }
+                    return Some(out);
                 }
             }
             C1::UlInformationTransfer(transfer) => {
@@ -444,15 +543,23 @@ impl Redactor {
                     &transfer.critical_extensions
                     && let UlInfo::DedicatedInfoNAS(nas) = &ies.dedicated_info_type
                 {
-                    return vec![self.rrc_nas(nas)];
+                    return Some(vec![self.rrc_nas(nas)]);
                 }
             }
+            C1::SecurityModeComplete(_)
+            | C1::SecurityModeFailure(_)
+            | C1::RrcConnectionReconfigurationComplete(_)
+            | C1::RrcConnectionReestablishmentComplete(_)
+            | C1::CounterCheckResponse(_) => {}
+            // measurement reports, capabilities, UE information and the rest describe the
+            // neighbourhood or the device
+            _ if self.location => return None,
             _ => {}
         }
-        vec![]
+        Some(vec![])
     }
 
-    fn dl_dcch(&mut self, msg: &lte_rrc::DL_DCCH_Message) -> Vec<Replacement> {
+    fn dl_dcch(&mut self, msg: &lte_rrc::DL_DCCH_Message) -> Option<Vec<Replacement>> {
         use lte_rrc::{
             DL_DCCH_MessageType, DL_DCCH_MessageType_c1 as C1,
             DLInformationTransfer_r8_IEsDedicatedInfoType as DlInfo,
@@ -462,7 +569,7 @@ impl Redactor {
             RRCConnectionReconfigurationCriticalExtensions_c1 as ReconfC1,
         };
         let DL_DCCH_MessageType::C1(c1) = &msg.message else {
-            return vec![];
+            return (!self.location).then(Vec::new);
         };
         match c1 {
             C1::DlInformationTransfer(transfer) => {
@@ -470,24 +577,102 @@ impl Redactor {
                     &transfer.critical_extensions
                     && let DlInfo::DedicatedInfoNAS(nas) = &ies.dedicated_info_type
                 {
-                    return vec![self.rrc_nas(nas)];
+                    return Some(vec![self.rrc_nas(nas)]);
                 }
             }
+            // measurement configuration and mobility name neighbour and target cells
+            C1::RrcConnectionReconfiguration(_) if self.location => return None,
             C1::RrcConnectionReconfiguration(reconf) => {
                 if let ReconfExt::C1(ReconfC1::RrcConnectionReconfiguration_r8(ies)) =
                     &reconf.critical_extensions
                 {
-                    return ies
-                        .dedicated_info_nas_list
-                        .iter()
-                        .flat_map(|l| l.0.iter())
-                        .map(|nas| self.rrc_nas(nas))
-                        .collect();
+                    return Some(
+                        ies.dedicated_info_nas_list
+                            .iter()
+                            .flat_map(|l| l.0.iter())
+                            .map(|nas| self.rrc_nas(nas))
+                            .collect(),
+                    );
                 }
             }
+            C1::RrcConnectionRelease(_)
+            | C1::SecurityModeCommand(_)
+            | C1::UeCapabilityEnquiry(_)
+            | C1::CounterCheck(_)
+            | C1::UeInformationRequest_r9(_) => {}
+            _ if self.location => return None,
             _ => {}
         }
-        vec![]
+        Some(vec![])
+    }
+}
+
+/// Cell and frequency in the header of an LTE RRC OTA log packet. The header is laid out right
+/// before the PDU, so the fields are found by their distance from the PDU and checked against the
+/// parsed values before they are cleared.
+struct OtaHeader {
+    phy_cell_id: u16,
+    earfcn: u32,
+    // bytes from the field to the start of the PDU
+    phy_cell_id_back: usize,
+    earfcn_back: usize,
+    earfcn_len: usize,
+}
+
+impl OtaHeader {
+    fn of(msg: &Message) -> Option<Self> {
+        let Message::Log {
+            body: LogBody::LteRrcOtaMessage { packet, .. },
+            ..
+        } = msg
+        else {
+            return None;
+        };
+        let (phy_cell_id, earfcn, phy_cell_id_back, earfcn_back, earfcn_len) = match packet {
+            LteRrcOtaPacket::V0 {
+                phy_cell_id,
+                earfcn,
+                ..
+            } => (*phy_cell_id, *earfcn as u32, 9, 7, 2),
+            LteRrcOtaPacket::V5 {
+                phy_cell_id,
+                earfcn,
+                ..
+            } => (*phy_cell_id, *earfcn as u32, 13, 11, 2),
+            LteRrcOtaPacket::V8 {
+                phy_cell_id,
+                earfcn,
+                ..
+            }
+            | LteRrcOtaPacket::V25 {
+                phy_cell_id,
+                earfcn,
+                ..
+            } => (*phy_cell_id, *earfcn, 15, 13, 4),
+        };
+        Some(Self {
+            phy_cell_id,
+            earfcn,
+            phy_cell_id_back,
+            earfcn_back,
+            earfcn_len,
+        })
+    }
+
+    /// Zeroes both fields in `raw`, where the PDU starts at `pdu_at`.
+    fn clear(&self, raw: &mut [u8], pdu_at: usize) -> Option<()> {
+        let cell = pdu_at.checked_sub(self.phy_cell_id_back)?;
+        let freq = pdu_at.checked_sub(self.earfcn_back)?;
+        let earfcn = &self.earfcn.to_le_bytes()[..self.earfcn_len];
+        if raw.get(cell..cell + 2)? != self.phy_cell_id.to_le_bytes()
+            || raw.get(freq..freq + self.earfcn_len)? != earfcn
+        {
+            log::debug!("redact: dropping RRC log, header fields not where expected");
+            return None;
+        }
+        raw[cell..cell + 2].fill(0);
+        raw[freq..freq + self.earfcn_len].fill(0);
+        Some(())
     }
 }
 
@@ -876,6 +1061,78 @@ mod tests {
             "address left"
         );
         assert!(find_once(&out, b"internet").is_some(), "APN kept");
+    }
+
+    fn redact_nas_location(pdu: &[u8]) -> Vec<u8> {
+        let mut r = Redactor::with_location();
+        let mut pdu = pdu.to_vec();
+        r.nas(&mut pdu);
+        pdu
+    }
+
+    #[test]
+    fn location_mode_clears_mme_group_and_code_in_guti() {
+        let guti = [
+            0x07, 0x50, 0x0b, 0xf6, 0x99, 0xf9, 0x07, 0x00, 0x02, 0x01, 0xc0, 0x00, 0x00, 0x13,
+        ];
+        let out = redact_nas_location(&guti);
+        assert_eq!(&out[4..7], &guti[4..7], "PLMN kept");
+        assert_eq!(&out[7..10], &[0, 0, 0], "MME group and code cleared");
+        assert_eq!(&out[10..14], &[0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn location_mode_clears_tai_list_in_attach_accept() {
+        // Attach Accept: result, T3412, TAI list (one TAI: PLMN + TAC 0x1234), empty ESM
+        let pdu = [
+            0x07, 0x42, 0x01, 0x21, 0x06, 0x00, 0x99, 0xf9, 0x07, 0x12, 0x34, 0x00, 0x00,
+        ];
+        let out = redact_nas_location(&pdu);
+        assert_eq!(&out[..5], &pdu[..5]);
+        assert!(out[5..11].iter().all(|b| *b == 0));
+        assert_eq!(
+            redact_nas(&pdu),
+            pdu.to_vec(),
+            "unchanged without location mode"
+        );
+    }
+
+    #[test]
+    fn location_mode_clears_last_visited_tai_and_emm_information() {
+        // TAU Request with old GUTI, then last visited registered TAI (IEI 0x52)
+        let mut pdu = vec![
+            0x07, 0x48, 0x01, 0x0b, 0xf6, 0x99, 0xf9, 0x07, 0x00, 0x02, 0x01,
+        ];
+        pdu.extend([0xc0, 0x00, 0x00, 0x13, 0x52, 0x99, 0xf9, 0x07, 0x12, 0x34]);
+        let out = redact_nas_location(&pdu);
+        assert_eq!(out[15], 0x52);
+        assert!(out[16..21].iter().all(|b| *b == 0));
+        // EMM Information with local time zone (IEI 0x46)
+        let info = redact_nas_location(&[0x07, 0x61, 0x46, 0x21]);
+        assert_eq!(info, vec![0x07, 0x61, 0, 0]);
+    }
+
+    #[test]
+    fn ota_header_cell_and_frequency_are_cleared_after_checking() {
+        let header = OtaHeader {
+            phy_cell_id: 0x0102,
+            earfcn: 0x0000_0e10,
+            phy_cell_id_back: 15,
+            earfcn_back: 13,
+            earfcn_len: 4,
+        };
+        // V8 layout before the PDU: cell (2), earfcn (4), sfn (2), pdu num (1), sib mask (4), len (2)
+        let mut raw = vec![
+            0xaa, 0x02, 0x01, 0x10, 0x0e, 0, 0, 7, 7, 1, 0, 0, 0, 0, 3, 0,
+        ];
+        let at = raw.len();
+        raw.extend([0x40, 0x41, 0x42]);
+        header.clear(&mut raw, at).unwrap();
+        assert_eq!(&raw[1..7], &[0, 0, 0, 0, 0, 0]);
+        assert_eq!(&raw[7..], &[7, 7, 1, 0, 0, 0, 0, 3, 0, 0x40, 0x41, 0x42]);
+        // fields not where expected: nothing is written
+        let mut other = vec![0u8; 19];
+        assert!(header.clear(&mut other, 16).is_none());
     }
 
     #[test]

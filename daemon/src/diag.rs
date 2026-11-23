@@ -28,6 +28,24 @@ use rayhunter::diag_device::DiagDevice;
 use rayhunter::qmdl::QmdlWriter;
 use rayhunter::redact::Redactor;
 
+/// What is removed from messages before they are written to a recording (see [`Redactor`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Redaction {
+    Off,
+    Identities,
+    IdentitiesAndLocation,
+}
+
+impl Redaction {
+    pub fn from_config(redact_identities: bool, redact_location: bool) -> Self {
+        match (redact_identities, redact_location) {
+            (_, true) => Redaction::IdentitiesAndLocation,
+            (true, false) => Redaction::Identities,
+            (false, false) => Redaction::Off,
+        }
+    }
+}
+
 use crate::analysis::{AnalysisCtrlMessage, AnalysisWriter};
 use crate::config::GpsMode;
 use crate::display;
@@ -72,7 +90,7 @@ pub struct DiagTask {
     bytes_since_space_check: usize,
     low_space_warned: bool,
     latest_packet_timestamp: Option<i64>,
-    redact_identities: bool,
+    redaction: Redaction,
 }
 
 enum DiagState {
@@ -123,7 +141,7 @@ impl DiagTask {
         min_space_to_continue_mb: u64,
         gps_mode: GpsMode,
         gps_fixed_coords: Option<(f64, f64)>,
-        redact_identities: bool,
+        redaction: Redaction,
     ) -> Self {
         Self {
             ui_update_sender,
@@ -140,7 +158,7 @@ impl DiagTask {
             bytes_since_space_check: 0,
             low_space_warned: false,
             latest_packet_timestamp: None,
-            redact_identities,
+            redaction,
         }
     }
 
@@ -206,7 +224,11 @@ impl DiagTask {
         self.state = DiagState::Recording {
             qmdl_writer,
             analysis_writer: Box::new(analysis_writer),
-            redactor: self.redact_identities.then(Redactor::new),
+            redactor: match self.redaction {
+                Redaction::Off => None,
+                Redaction::Identities => Some(Redactor::new()),
+                Redaction::IdentitiesAndLocation => Some(Redactor::with_location()),
+            },
         };
 
         if let Err(e) = self
@@ -478,7 +500,7 @@ pub fn run_diag_read_thread(
     device: Device,
     diag_serial: Option<String>,
     diag_signalling_only: bool,
-    redact_identities: bool,
+    redaction: Redaction,
     mut qmdl_file_rx: Receiver<DiagDeviceCtrlMessage>,
     qmdl_file_tx: Sender<DiagDeviceCtrlMessage>,
     ui_update_sender: Sender<display::DisplayState>,
@@ -516,7 +538,7 @@ pub fn run_diag_read_thread(
             min_space_to_continue_mb,
             gps_mode,
             gps_fixed_coords,
-            redact_identities,
+            redaction,
         );
         qmdl_file_tx
             .send(DiagDeviceCtrlMessage::StartRecording { response_tx: None })

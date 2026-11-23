@@ -78,6 +78,10 @@ pub struct Config {
     /// written, and leave out messages where that isn't possible. Analysis still runs on the
     /// messages as received.
     pub redact_identities: bool,
+    /// Also remove where the device was (cells, tracking areas, neighbours, the network's time
+    /// zone) before messages are written, e.g. for recordings on an SD card that can't be wiped
+    /// reliably. Implies redact_identities.
+    pub redact_location: bool,
     /// UI level
     pub ui_level: UiLevel,
     /// Colorblind mode
@@ -164,6 +168,7 @@ impl Default for Config {
             diag_signalling_only: false,
             store_informational_events: false,
             redact_identities: false,
+            redact_location: false,
             ui_level: UiLevel::Subtle,
             colorblind_mode: false,
             key_input_mode: KeyInputMode::Disabled,
