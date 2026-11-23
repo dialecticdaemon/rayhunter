@@ -1,7 +1,10 @@
-> **This branch is an experimental, unofficial port of Rayhunter to the GL.iNet Mudi V2 (GL-E750V2).**
+> **This branch is an experimental, unofficial port of Rayhunter to the GL.iNet Mudi V2 (GL-E750V2),
+> with a prototype that redacts identities and location before recordings are written.**
 > It is not part of the EFF's Rayhunter and is not supported by the EFF.
 >
-> Start with [doc/glinet-mudi.md](doc/glinet-mudi.md). A package for the router is on the
+> Start with [doc/glinet-mudi.md](doc/glinet-mudi.md), the redaction is described
+> [there](doc/glinet-mudi.md#redacting-identities-and-location-experimental). Do not rely on it yet.
+> A package for the router is on the
 > [releases page](https://github.com/dialecticdaemon/rayhunter/releases).
 >
 > Tested on GL firmware 4.3.26 and 4.3.30 in my own LTE test cell, not against real IMSI catchers.
