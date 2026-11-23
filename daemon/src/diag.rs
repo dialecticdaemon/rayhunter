@@ -26,6 +26,7 @@ use rayhunter::analysis::analyzer::{AnalysisLineNormalizer, AnalyzerConfig, Even
 use rayhunter::diag::{DataType, Message, MessagesContainer};
 use rayhunter::diag_device::DiagDevice;
 use rayhunter::qmdl::QmdlWriter;
+use rayhunter::redact::Redactor;
 
 use crate::analysis::{AnalysisCtrlMessage, AnalysisWriter};
 use crate::config::GpsMode;
@@ -71,12 +72,15 @@ pub struct DiagTask {
     bytes_since_space_check: usize,
     low_space_warned: bool,
     latest_packet_timestamp: Option<i64>,
+    redact_identities: bool,
 }
 
 enum DiagState {
     Recording {
         qmdl_writer: Box<QmdlWriter<File>>,
         analysis_writer: Box<AnalysisWriter>,
+        // one per recording, so that placeholders can't be linked across recordings
+        redactor: Option<Redactor>,
     },
     Stopped,
 }
@@ -119,6 +123,7 @@ impl DiagTask {
         min_space_to_continue_mb: u64,
         gps_mode: GpsMode,
         gps_fixed_coords: Option<(f64, f64)>,
+        redact_identities: bool,
     ) -> Self {
         Self {
             ui_update_sender,
@@ -135,6 +140,7 @@ impl DiagTask {
             bytes_since_space_check: 0,
             low_space_warned: false,
             latest_packet_timestamp: None,
+            redact_identities,
         }
     }
 
@@ -200,6 +206,7 @@ impl DiagTask {
         self.state = DiagState::Recording {
             qmdl_writer,
             analysis_writer: Box::new(analysis_writer),
+            redactor: self.redact_identities.then(Redactor::new),
         };
 
         if let Err(e) = self
@@ -343,6 +350,7 @@ impl DiagTask {
         if let DiagState::Recording {
             qmdl_writer,
             analysis_writer,
+            redactor,
         } = &mut self.state
         {
             if self.bytes_since_space_check >= DISK_CHECK_BYTES_INTERVAL {
@@ -387,7 +395,12 @@ impl DiagTask {
                 }
             }
 
-            if let Err(e) = qmdl_writer.write_container(&container).await {
+            // analysis below still gets the container as received
+            let scrubbed = redactor.as_mut().map(|r| r.scrub_container(&container));
+            if let Err(e) = qmdl_writer
+                .write_container(scrubbed.as_ref().unwrap_or(&container))
+                .await
+            {
                 let reason = format!("failed to write to QMDL (disk full?): {e}");
                 error!("{reason}");
                 self.stop(qmdl_store, Some(reason)).await;
@@ -465,6 +478,7 @@ pub fn run_diag_read_thread(
     device: Device,
     diag_serial: Option<String>,
     diag_signalling_only: bool,
+    redact_identities: bool,
     mut qmdl_file_rx: Receiver<DiagDeviceCtrlMessage>,
     qmdl_file_tx: Sender<DiagDeviceCtrlMessage>,
     ui_update_sender: Sender<display::DisplayState>,
@@ -502,6 +516,7 @@ pub fn run_diag_read_thread(
             min_space_to_continue_mb,
             gps_mode,
             gps_fixed_coords,
+            redact_identities,
         );
         qmdl_file_tx
             .send(DiagDeviceCtrlMessage::StartRecording { response_tx: None })

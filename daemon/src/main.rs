@@ -259,6 +259,7 @@ async fn run_with_config(
             config.device.clone(),
             config.diag_serial.clone(),
             config.diag_signalling_only,
+            config.redact_identities,
             diag_rx,
             diag_tx.clone(),
             ui_update_tx.clone(),

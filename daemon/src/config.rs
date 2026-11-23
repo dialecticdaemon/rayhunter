@@ -74,6 +74,10 @@ pub struct Config {
     pub diag_signalling_only: bool,
     /// Also store analysis rows that only contain Informational events
     pub store_informational_events: bool,
+    /// Replace subscriber and device identities (IMSI, IMEI, TMSI, UE IP) before a recording is
+    /// written, and leave out messages where that isn't possible. Analysis still runs on the
+    /// messages as received.
+    pub redact_identities: bool,
     /// UI level
     pub ui_level: UiLevel,
     /// Colorblind mode
@@ -159,6 +163,7 @@ impl Default for Config {
             diag_serial: None,
             diag_signalling_only: false,
             store_informational_events: false,
+            redact_identities: false,
             ui_level: UiLevel::Subtle,
             colorblind_mode: false,
             key_input_mode: KeyInputMode::Disabled,

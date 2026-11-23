@@ -22,6 +22,7 @@ pub mod log_codes;
 pub mod pcap;
 pub mod plmn;
 pub mod qmdl;
+pub mod redact;
 #[cfg(test)]
 mod test_util;
 pub mod util;

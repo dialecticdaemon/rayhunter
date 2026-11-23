@@ -27,6 +27,13 @@ struct Args {
     #[arg(short = 'P', long, help = "Convert qmdl files to pcap after analysis")]
     pcapify: bool,
 
+    #[arg(
+        long,
+        requires = "pcapify",
+        help = "Replace subscriber and device identities (IMSI, IMEI, TMSI, UE IP) in the pcap"
+    )]
+    redact: bool,
+
     #[arg(long, help = "Show why some packets were skipped during analysis")]
     show_skipped: bool,
 
@@ -190,7 +197,7 @@ async fn analyze_qmdl(
     }
 }
 
-async fn pcapify(qmdl_path: &PathBuf) {
+async fn pcapify(qmdl_path: &PathBuf, redact: bool) {
     let qmdl_file = &mut File::open(&qmdl_path)
         .await
         .expect("failed to open qmdl file");
@@ -198,7 +205,9 @@ async fn pcapify(qmdl_path: &PathBuf) {
         .await
         .expect("failed to open QmdlReader");
     let mut pcap_path = qmdl_path.clone();
-    pcap_path.set_extension("pcapng");
+    pcap_path.set_extension(if redact { "redacted.pcapng" } else { "pcapng" });
+    let mut redactor = redact.then(rayhunter::redact::Redactor::new);
+    let mut dropped: HashMap<String, u32> = HashMap::new();
     let pcap_file = &mut File::create(&pcap_path)
         .await
         .expect("failed to open pcap file");
@@ -212,6 +221,17 @@ async fn pcapify(qmdl_path: &PathBuf) {
         if let Ok(msg) = maybe_message
             && let Ok(Some((timestamp, parsed))) = gsmtap_parser::parse(msg)
         {
+            let gsmtap_type = format!("{:?}", parsed.header.gsmtap_type);
+            let parsed = match redactor.as_mut() {
+                Some(redactor) => match redactor.redact(parsed) {
+                    Some(parsed) => parsed,
+                    None => {
+                        *dropped.entry(gsmtap_type).or_default() += 1;
+                        continue;
+                    }
+                },
+                None => parsed,
+            };
             pcap_writer
                 .write_gsmtap_message(parsed, timestamp, None)
                 .await
@@ -219,6 +239,9 @@ async fn pcapify(qmdl_path: &PathBuf) {
         }
     }
     info!("wrote pcap to {:?}", pcap_path);
+    if redact {
+        info!("left out messages whose identities could not be removed: {dropped:?}");
+    }
 }
 
 #[tokio::main]
@@ -273,7 +296,7 @@ async fn main() {
             info!("**** Beginning analysis of {name_str}");
             analyze_qmdl(path_str, args.show_skipped, json_writer.as_mut()).await;
             if args.pcapify {
-                pcapify(&path.to_path_buf()).await;
+                pcapify(&path.to_path_buf(), args.redact).await;
             }
         } else if name_str.ends_with(".pcap") || name_str.ends_with(".pcapng") {
             // TODO: if we've already analyzed a QMDL, skip its corresponding pcap
