@@ -1,3 +1,13 @@
+> **This branch is an experimental, unofficial port of Rayhunter to the GL.iNet Mudi V2 (GL-E750V2).**
+> It is not part of the EFF's Rayhunter and is not supported by the EFF.
+>
+> Start with [doc/glinet-mudi.md](doc/glinet-mudi.md). A package for the router is on the
+> [releases page](https://github.com/dialecticdaemon/rayhunter/releases).
+>
+> Tested on GL firmware 4.3.26 and 4.3.30 in my own LTE test cell, not against real IMSI catchers.
+> The code was written with the help of an AI assistant (Claude). I tested it on the device and
+> am still reviewing it line by line.
+
 # Rayhunter
 ![Tests](https://github.com/EFForg/rayhunter/actions/workflows/main.yml/badge.svg)
 
